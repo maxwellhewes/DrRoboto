@@ -14,6 +14,7 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import threading
 import time
 import logging
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Enable Flask debug logging
 app.logger.setLevel(logging.DEBUG)
@@ -49,7 +51,9 @@ ros_node = None
 joint_pub = None
 pose_pub = None
 status_sub = None
+joint_sub = None
 last_status = "Ready"
+last_joint_state = None
 
 class RobotControllerNode(Node):
     def __init__(self):
@@ -73,6 +77,13 @@ class RobotControllerNode(Node):
             10
         )
         
+        self.joint_sub = self.create_subscription(
+            JointState,
+            f'{ROS_TOPIC_PREFIX}/joint_states',
+            self.joint_state_callback,
+            10
+        )
+        
         self.get_logger().info('Web Robot Controller node initialized')
     
     def status_callback(self, msg):
@@ -84,6 +95,36 @@ class RobotControllerNode(Node):
         global last_status
         last_status = msg.data
         self.get_logger().info(f'Robot status: {msg.data}')
+    
+    def joint_state_callback(self, msg):
+        """Handle incoming joint state messages and broadcast via WebSocket.
+        
+        Args:
+            msg (JointState): ROS message containing current joint positions
+        """
+        global last_joint_state
+        last_joint_state = msg
+        
+        # Extract joint positions and convert to degrees
+        joint_data = {
+            'joint1': {
+                'position': msg.position[0] if len(msg.position) > 0 else 0.0,
+                'position_degrees': math.degrees(msg.position[0]) if len(msg.position) > 0 else 0.0,
+                'velocity': msg.velocity[0] if len(msg.velocity) > 0 else 0.0,
+                'effort': msg.effort[0] if len(msg.effort) > 0 else 0.0
+            },
+            'joint2': {
+                'position': msg.position[1] if len(msg.position) > 1 else 0.0,
+                'position_degrees': math.degrees(msg.position[1]) if len(msg.position) > 1 else 0.0,
+                'velocity': msg.velocity[1] if len(msg.velocity) > 1 else 0.0,
+                'effort': msg.effort[1] if len(msg.effort) > 1 else 0.0
+            },
+            'timestamp': time.time()
+        }
+        
+        # Broadcast joint state via WebSocket
+        socketio.emit('joint_state_update', joint_data)
+        self.get_logger().debug(f'Broadcasted joint state: {joint_data}')
     
     def publish_joint_state(self, joint1, joint2):
         """Publish joint state directly to control robot arm position.
@@ -123,7 +164,7 @@ def init_ros():
     Returns:
         bool: True if initialization successful, False otherwise
     """
-    global ros_node, joint_pub, pose_pub, status_sub
+    global ros_node, joint_pub, pose_pub, status_sub, joint_sub
     
     logger.info("Starting ROS 2 initialization...")
     
@@ -137,6 +178,7 @@ def init_ros():
         joint_pub = ros_node.joint_pub
         pose_pub = ros_node.pose_pub
         status_sub = ros_node.status_sub
+        joint_sub = ros_node.joint_sub
         logger.info("RobotControllerNode created successfully")
         
         # Spin the node in a separate thread
@@ -377,6 +419,60 @@ def debug_info():
         }
     })
 
+# WebSocket event handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle WebSocket client connection."""
+    logger.info(f'Client connected: {request.sid}')
+    emit('connection_status', {'status': 'connected', 'message': 'Connected to DrRoboto WebSocket'})
+    
+    # Send current joint state if available
+    if last_joint_state:
+        joint_data = {
+            'joint1': {
+                'position': last_joint_state.position[0] if len(last_joint_state.position) > 0 else 0.0,
+                'position_degrees': math.degrees(last_joint_state.position[0]) if len(last_joint_state.position) > 0 else 0.0,
+                'velocity': last_joint_state.velocity[0] if len(last_joint_state.velocity) > 0 else 0.0,
+                'effort': last_joint_state.effort[0] if len(last_joint_state.effort) > 0 else 0.0
+            },
+            'joint2': {
+                'position': last_joint_state.position[1] if len(last_joint_state.position) > 1 else 0.0,
+                'position_degrees': math.degrees(last_joint_state.position[1]) if len(last_joint_state.position) > 1 else 0.0,
+                'velocity': last_joint_state.velocity[1] if len(last_joint_state.velocity) > 1 else 0.0,
+                'effort': last_joint_state.effort[1] if len(last_joint_state.effort) > 1 else 0.0
+            },
+            'timestamp': time.time()
+        }
+        emit('joint_state_update', joint_data)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle WebSocket client disconnection."""
+    logger.info(f'Client disconnected: {request.sid}')
+
+@socketio.on('request_joint_update')
+def handle_joint_update_request():
+    """Handle request for current joint state."""
+    if last_joint_state:
+        joint_data = {
+            'joint1': {
+                'position': last_joint_state.position[0] if len(last_joint_state.position) > 0 else 0.0,
+                'position_degrees': math.degrees(last_joint_state.position[0]) if len(last_joint_state.position) > 0 else 0.0,
+                'velocity': last_joint_state.velocity[0] if len(last_joint_state.velocity) > 0 else 0.0,
+                'effort': last_joint_state.effort[0] if len(last_joint_state.effort) > 0 else 0.0
+            },
+            'joint2': {
+                'position': last_joint_state.position[1] if len(last_joint_state.position) > 1 else 0.0,
+                'position_degrees': math.degrees(last_joint_state.position[1]) if len(last_joint_state.position) > 1 else 0.0,
+                'velocity': last_joint_state.velocity[1] if len(last_joint_state.velocity) > 1 else 0.0,
+                'effort': last_joint_state.effort[1] if len(last_joint_state.effort) > 1 else 0.0
+            },
+            'timestamp': time.time()
+        }
+        emit('joint_state_update', joint_data)
+    else:
+        emit('joint_state_update', {'error': 'No joint state data available'})
+
 if __name__ == '__main__':
     logger.info("Starting DrRoboto Web Application...")
     logger.info(f"Environment variables: ROS_TOPIC_PREFIX='{ROS_TOPIC_PREFIX}'")
@@ -384,8 +480,8 @@ if __name__ == '__main__':
     # Initialize ROS 2
     logger.info("Attempting to initialize ROS 2...")
     if init_ros():
-        logger.info("Starting Flask app with ROS 2 support...")
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        logger.info("Starting Flask-SocketIO app with ROS 2 support...")
+        socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
     else:
-        logger.warning("Failed to initialize ROS 2. Starting Flask app without ROS 2 support...")
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        logger.warning("Failed to initialize ROS 2. Starting Flask-SocketIO app without ROS 2 support...")
+        socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)

@@ -2,31 +2,58 @@
 
 let commandsSent = 0;
 let successfulCommands = 0;
+let socket = null;
+let websocketConnected = false;
 
-// Initialize the interface
+/**
+ * Initialize the interface when the DOM is fully loaded.
+ * Sets up sliders, updates statistics, checks connection, and initializes WebSocket.
+ */
 document.addEventListener('DOMContentLoaded', function () {
     initializeSliders();
     updateStats();
     checkConnection();
+    initializeWebSocket();
 });
 
-// Initialize joint sliders
+/**
+ * Initialize joint sliders with event listeners for real-time control.
+ * Sets up input event handlers for both joint sliders and implements debounced
+ * position sending to prevent excessive API calls during slider dragging.
+ */
 function initializeSliders() {
     const joint1Slider = document.getElementById('joint1');
     const joint2Slider = document.getElementById('joint2');
     const joint1Value = document.getElementById('joint1-value');
     const joint2Value = document.getElementById('joint2-value');
 
+    // Debounce timer for slider updates
+    let sliderDebounceTimer = null;
+
     joint1Slider.addEventListener('input', function () {
         joint1Value.textContent = this.value + '°';
+        sendSliderPosition();
     });
 
     joint2Slider.addEventListener('input', function () {
         joint2Value.textContent = this.value + '°';
+        sendSliderPosition();
     });
+
+    // Debounced function to send slider position
+    function sendSliderPosition() {
+        clearTimeout(sliderDebounceTimer);
+        sliderDebounceTimer = setTimeout(() => {
+            setCustomJoints(false); // Don't show loading modal for slider updates
+        }, 150); // 150ms debounce delay
+    }
 }
 
-// Move robot to a predefined pose
+/**
+ * Move the robot to a predefined pose.
+ * @param {string} poseName - The name of the pose to move to (e.g., 'home', 'wave')
+ * @returns {Promise<void>} Promise that resolves when the pose command is complete
+ */
 async function moveToPose(poseName) {
     console.log('Starting moveToPose:', poseName);
     showLoading();
@@ -60,12 +87,18 @@ async function moveToPose(poseName) {
     }
 }
 
-// Set custom joint positions
-async function setCustomJoints() {
+/**
+ * Set custom joint positions for the robot.
+ * @param {boolean} [showLoadingModal=true] - Whether to show loading modal and status messages
+ * @returns {Promise<void>} Promise that resolves when the joint command is complete
+ */
+async function setCustomJoints(showLoadingModal = true) {
     const joint1 = document.getElementById('joint1').value;
     const joint2 = document.getElementById('joint2').value;
 
-    showLoading();
+    if (showLoadingModal) {
+        showLoading();
+    }
 
     try {
         const response = await fetch('/api/joints', {
@@ -82,20 +115,31 @@ async function setCustomJoints() {
         const data = await response.json();
 
         if (data.success) {
-            showStatus('success', 'Joints Set', data.message);
+            if (showLoadingModal) {
+                showStatus('success', 'Joints Set', data.message);
+            }
             updateLastCommand(`Custom: J1=${joint1}°, J2=${joint2}°`);
         } else {
-            showStatus('danger', 'Error', data.error);
+            if (showLoadingModal) {
+                showStatus('danger', 'Error', data.error);
+            }
         }
     } catch (error) {
-        showStatus('danger', 'Error', 'Failed to send command: ' + error.message);
+        if (showLoadingModal) {
+            showStatus('danger', 'Error', 'Failed to send command: ' + error.message);
+        }
     } finally {
-        hideLoading();
+        if (showLoadingModal) {
+            hideLoading();
+        }
         updateStats();
     }
 }
 
-// Reset joints to home position
+/**
+ * Reset joints to home position (0 degrees) and move robot to home pose.
+ * Updates both slider values and display text, then triggers home pose movement.
+ */
 function resetJoints() {
     document.getElementById('joint1').value = 0;
     document.getElementById('joint2').value = 0;
@@ -104,7 +148,10 @@ function resetJoints() {
     moveToPose('home');
 }
 
-// Perform wave gesture
+/**
+ * Perform a wave gesture with the robot.
+ * @returns {Promise<void>} Promise that resolves when the wave gesture is complete
+ */
 async function waveGesture() {
     showLoading();
 
@@ -132,13 +179,19 @@ async function waveGesture() {
     }
 }
 
-// Emergency stop (move to home)
+/**
+ * Emergency stop function that immediately moves robot to home position.
+ * Shows a warning status message and triggers home pose movement.
+ */
 function emergencyStop() {
     showStatus('warning', 'Emergency Stop', 'Moving to home position...');
     moveToPose('home');
 }
 
-// Get robot status
+/**
+ * Get the current status of the robot.
+ * @returns {Promise<void>} Promise that resolves when status is retrieved
+ */
 async function getStatus() {
     try {
         const response = await fetch('/api/status');
@@ -154,7 +207,10 @@ async function getStatus() {
     }
 }
 
-// Get available topics
+/**
+ * Get list of available ROS topics from the robot.
+ * @returns {Promise<void>} Promise that resolves when topics are retrieved
+ */
 async function getTopics() {
     try {
         const response = await fetch('/api/topics');
@@ -171,7 +227,11 @@ async function getTopics() {
     }
 }
 
-// Check connection health
+/**
+ * Check the health status of the connection to the robot.
+ * Updates the connection status indicator based on API health check.
+ * @returns {Promise<void>} Promise that resolves when health check is complete
+ */
 async function checkConnection() {
     try {
         const response = await fetch('/api/health');
@@ -187,7 +247,10 @@ async function checkConnection() {
     }
 }
 
-// Update connection status indicator
+/**
+ * Update the visual connection status indicator.
+ * @param {boolean} connected - Whether the connection is active
+ */
 function updateConnectionStatus(connected) {
     const indicator = document.getElementById('connection-indicator');
     if (connected) {
@@ -199,7 +262,12 @@ function updateConnectionStatus(connected) {
     }
 }
 
-// Show status message
+/**
+ * Display a status message in the status panel.
+ * @param {string} type - Alert type ('success', 'danger', 'warning', 'info')
+ * @param {string} title - Title of the status message
+ * @param {string} message - Content of the status message
+ */
 function showStatus(type, title, message) {
     const statusPanel = document.getElementById('status-panel');
     const alertDiv = document.createElement('div');
@@ -226,12 +294,18 @@ function showStatus(type, title, message) {
     }
 }
 
-// Update last command display
+/**
+ * Update the display showing the last command sent to the robot.
+ * @param {string} command - The command text to display
+ */
 function updateLastCommand(command) {
     document.getElementById('last-command').textContent = command;
 }
 
-// Update statistics
+/**
+ * Update command statistics (commands sent and success rate).
+ * Increments the commands sent counter and calculates success rate.
+ */
 function updateStats() {
     commandsSent++;
     const successRate = commandsSent > 0 ? Math.round((successfulCommands / commandsSent) * 100) : 100;
@@ -240,7 +314,10 @@ function updateStats() {
     document.getElementById('success-rate').textContent = successRate + '%';
 }
 
-// Show loading modal
+/**
+ * Show the loading modal with backdrop.
+ * Prevents body scrolling and displays a loading overlay.
+ */
 function showLoading() {
     console.log('Showing loading modal...');
     const modalElement = document.getElementById('loadingModal');
@@ -257,7 +334,10 @@ function showLoading() {
     document.body.style.overflow = 'hidden';
 }
 
-// Hide loading modal
+/**
+ * Hide the loading modal and restore normal page behavior.
+ * Removes backdrop and restores body scrolling.
+ */
 function hideLoading() {
     console.log('Hiding loading modal...');
     const modalElement = document.getElementById('loadingModal');
@@ -276,3 +356,140 @@ function hideLoading() {
 
 // Periodic connection check
 setInterval(checkConnection, 30000); // Check every 30 seconds
+
+/**
+ * Initialize WebSocket connection for real-time communication.
+ * Sets up Socket.IO connection and event handlers for joint state updates
+ * and connection status monitoring.
+ */
+function initializeWebSocket() {
+    console.log('Initializing WebSocket connection...');
+
+    // Connect to the Socket.IO server
+    socket = io();
+
+    // Connection event handlers
+    socket.on('connect', function () {
+        console.log('WebSocket connected');
+        websocketConnected = true;
+        updateWebSocketStatus(true);
+        showStatus('success', 'WebSocket', 'Real-time connection established');
+    });
+
+    socket.on('disconnect', function () {
+        console.log('WebSocket disconnected');
+        websocketConnected = false;
+        updateWebSocketStatus(false);
+        showStatus('warning', 'WebSocket', 'Real-time connection lost');
+    });
+
+    socket.on('connect_error', function (error) {
+        console.error('WebSocket connection error:', error);
+        websocketConnected = false;
+        updateWebSocketStatus(false);
+        showStatus('danger', 'WebSocket', 'Connection failed: ' + error.message);
+    });
+
+    // Joint state update handler
+    socket.on('joint_state_update', function (data) {
+        console.log('Received joint state update:', data);
+        updateRealTimePosition(data);
+    });
+
+    // Connection status handler
+    socket.on('connection_status', function (data) {
+        console.log('Connection status:', data);
+        if (data.status === 'connected') {
+            showStatus('info', 'WebSocket', data.message);
+        }
+    });
+}
+
+/**
+ * Update the WebSocket connection status indicator.
+ * @param {boolean} connected - Whether the WebSocket is connected
+ */
+function updateWebSocketStatus(connected) {
+    const indicator = document.getElementById('websocket-indicator');
+    if (connected) {
+        indicator.className = 'badge bg-success me-2';
+        indicator.innerHTML = '<i class="fas fa-plug"></i> WebSocket Connected';
+    } else {
+        indicator.className = 'badge bg-danger me-2';
+        indicator.innerHTML = '<i class="fas fa-plug"></i> WebSocket Disconnected';
+    }
+}
+
+/**
+ * Update real-time position displays from WebSocket data.
+ * Updates joint position displays and timestamp, then syncs sliders.
+ * @param {Object} data - Joint state data from WebSocket
+ * @param {Object} data.joint1 - Joint 1 position data
+ * @param {Object} data.joint2 - Joint 2 position data
+ * @param {number} data.timestamp - Timestamp of the position update
+ */
+function updateRealTimePosition(data) {
+    if (data.error) {
+        console.error('Joint state error:', data.error);
+        return;
+    }
+
+    // Update joint position displays
+    const joint1Element = document.getElementById('realtime-joint1');
+    const joint2Element = document.getElementById('realtime-joint2');
+    const timestampElement = document.getElementById('position-timestamp');
+
+    if (joint1Element && data.joint1) {
+        joint1Element.textContent = data.joint1.position_degrees.toFixed(1) + '°';
+    }
+
+    if (joint2Element && data.joint2) {
+        joint2Element.textContent = data.joint2.position_degrees.toFixed(1) + '°';
+    }
+
+    if (timestampElement && data.timestamp) {
+        const date = new Date(data.timestamp * 1000);
+        timestampElement.textContent = 'Last update: ' + date.toLocaleTimeString();
+    }
+
+    // Update sliders to match real-time position
+    updateSlidersFromRealTime(data);
+}
+
+/**
+ * Update slider positions and values from real-time joint data.
+ * Synchronizes slider UI with actual robot joint positions.
+ * @param {Object} data - Joint state data from WebSocket
+ * @param {Object} data.joint1 - Joint 1 position data with position_degrees property
+ * @param {Object} data.joint2 - Joint 2 position data with position_degrees property
+ */
+function updateSlidersFromRealTime(data) {
+    if (!data.joint1 || !data.joint2) return;
+
+    const joint1Slider = document.getElementById('joint1');
+    const joint2Slider = document.getElementById('joint2');
+    const joint1Value = document.getElementById('joint1-value');
+    const joint2Value = document.getElementById('joint2-value');
+
+    if (joint1Slider && joint1Value) {
+        joint1Slider.value = data.joint1.position_degrees;
+        joint1Value.textContent = data.joint1.position_degrees.toFixed(1) + '°';
+    }
+
+    if (joint2Slider && joint2Value) {
+        joint2Slider.value = data.joint2.position_degrees;
+        joint2Value.textContent = data.joint2.position_degrees.toFixed(1) + '°';
+    }
+}
+
+/**
+ * Request a joint state update from the robot via WebSocket.
+ * Only works when WebSocket connection is active.
+ */
+function requestJointUpdate() {
+    if (socket && websocketConnected) {
+        socket.emit('request_joint_update');
+    } else {
+        console.warn('WebSocket not connected, cannot request joint update');
+    }
+}
