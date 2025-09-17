@@ -1,0 +1,51 @@
+networks:
+  drroboto_network:
+    driver: bridge
+
+services:
+  # ROS 2 Simulation Service
+  drroboto-sim:
+    build: ./two_link_arm_sim
+    container_name: drroboto_simulation
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /home/$USER/.Xauthority:/home/ros/.Xauthority:rw
+    networks:
+      - drroboto_network
+    privileged: true
+    command: /home/ros/start_simulation.sh
+
+  # Alternative service for Gazebo simulation
+  drroboto-gazebo:
+    build: ./two_link_arm_sim
+    container_name: drroboto_gazebo
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /home/$USER/.Xauthority:/home/ros/.Xauthority:rw
+    networks:
+      - drroboto_network
+    privileged: true
+    command: >
+      bash -c "source /home/ros/workspace/install/setup.bash && 
+               ros2 launch two_link_arm_sim arm_simulation.launch.py"
+
+  # Web Application Service
+  drroboto-web:
+    build: ./webapp
+    container_name: drroboto_webapp
+    environment:
+      - FLASK_ENV=production
+      - ROS_DOMAIN_ID=0
+    ports:
+      - "5000:5000"
+    networks:
+      - drroboto_network
+    depends_on:
+      - drroboto-sim
+    restart: unless-stopped

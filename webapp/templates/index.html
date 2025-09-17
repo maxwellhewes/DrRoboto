@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DrRoboto - Robot Control Interface</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Header -->
+            <div class="col-12">
+                <nav class="navbar navbar-dark bg-primary mb-4">
+                    <div class="container-fluid">
+                        <span class="navbar-brand mb-0 h1">
+                            <i class="fas fa-robot me-2"></i>DrRoboto Control Interface
+                        </span>
+                        <div class="d-flex">
+                            <button class="btn btn-outline-light me-2" onclick="getStatus()">
+                                <i class="fas fa-info-circle"></i> Status
+                            </button>
+                            <button class="btn btn-outline-light" onclick="getTopics()">
+                                <i class="fas fa-list"></i> Topics
+                            </button>
+                        </div>
+                    </div>
+                </nav>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Control Panel -->
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-gamepad me-2"></i>Robot Control Panel</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Predefined Poses -->
+                        <div class="mb-4">
+                            <h6>Predefined Poses</h6>
+                            <div class="row">
+                                {% for pose_name, angles in poses.items() %}
+                                <div class="col-md-4 col-sm-6 mb-2">
+                                    <button class="btn btn-outline-primary w-100 pose-btn" data-pose="{{ pose_name }}"
+                                        onclick="moveToPose('{{ pose_name }}')">
+                                        <i class="fas fa-hand-point-up me-1"></i>
+                                        {{ pose_name.title() }}
+                                        <br>
+                                        <small class="text-muted">
+                                            J1: {{ "%.0f"|format(angles[0] * 180 / 3.14159) }}°
+                                            J2: {{ "%.0f"|format(angles[1] * 180 / 3.14159) }}°
+                                        </small>
+                                    </button>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <!-- Custom Joint Control -->
+                        <div class="mb-4">
+                            <h6>Custom Joint Control</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label for="joint1" class="form-label">Joint 1 (degrees)</label>
+                                    <input type="range" class="form-range" id="joint1" min="-180" max="180" value="0">
+                                    <div class="d-flex justify-content-between">
+                                        <span>-180°</span>
+                                        <span id="joint1-value">0°</span>
+                                        <span>180°</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="joint2" class="form-label">Joint 2 (degrees)</label>
+                                    <input type="range" class="form-range" id="joint2" min="-90" max="90" value="0">
+                                    <div class="d-flex justify-content-between">
+                                        <span>-90°</span>
+                                        <span id="joint2-value">0°</span>
+                                        <span>90°</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <button class="btn btn-success" onclick="setCustomJoints()">
+                                    <i class="fas fa-play me-1"></i>Move to Position
+                                </button>
+                                <button class="btn btn-secondary ms-2" onclick="resetJoints()">
+                                    <i class="fas fa-undo me-1"></i>Reset to Home
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Special Actions -->
+                        <div class="mb-4">
+                            <h6>Special Actions</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <button class="btn btn-warning w-100" onclick="waveGesture()">
+                                        <i class="fas fa-hand-paper me-1"></i>Wave Gesture
+                                    </button>
+                                </div>
+                                <div class="col-md-6">
+                                    <button class="btn btn-info w-100" onclick="emergencyStop()">
+                                        <i class="fas fa-stop me-1"></i>Emergency Stop
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Panel -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line me-2"></i>Status & Logs</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="status-panel">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-1"></i>
+                                Ready to control the robot
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <h6>Connection Status</h6>
+                            <div class="d-flex align-items-center">
+                                <div id="connection-indicator" class="badge bg-success me-2">
+                                    <i class="fas fa-circle"></i> Connected
+                                </div>
+                                <small class="text-muted" id="last-command">No commands sent</small>
+                            </div>
+                            <div class="mt-2">
+                                <div id="websocket-indicator" class="badge bg-secondary me-2">
+                                    <i class="fas fa-plug"></i> WebSocket Disconnected
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <h6>Real-time Position</h6>
+                            <div class="row text-center">
+                                <div class="col-6">
+                                    <div class="border rounded p-2">
+                                        <div class="h6 mb-0" id="realtime-joint1">0.0°</div>
+                                        <small class="text-muted">Joint 1</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="border rounded p-2">
+                                        <div class="h6 mb-0" id="realtime-joint2">0.0°</div>
+                                        <small class="text-muted">Joint 2</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted" id="position-timestamp">No data received</small>
+                            </div>
+                            <div class="mt-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="requestJointUpdate()">
+                                    <i class="fas fa-sync-alt me-1"></i>Refresh Position
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <h6>Quick Stats</h6>
+                            <div class="row text-center">
+                                <div class="col-6">
+                                    <div class="border rounded p-2">
+                                        <div class="h5 mb-0" id="commands-sent">0</div>
+                                        <small class="text-muted">Commands Sent</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="border rounded p-2">
+                                        <div class="h5 mb-0" id="success-rate">100%</div>
+                                        <small class="text-muted">Success Rate</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="custom-modal">
+        <div class="custom-modal-content">
+            <div class="custom-modal-body">
+                <div class="custom-spinner"></div>
+                <div class="mt-2">Sending command...</div>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/control.js') }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,12 @@
+# DrRoboto Web App Dependencies
+Flask==2.3.3
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.6
+requests==2.31.0
+gunicorn==21.2.0
+
+# ROS 2 Python dependencies
+# Note: These will be installed from the ROS 2 base image
+# rclpy
+# sensor_msgs
+# std_msgs
