@@ -845,3 +845,84 @@ small {
 #status-panel::-webkit-scrollbar-thumb:hover {
     background: #5a6fd8;
 }
+
+/* Position Control Styles */
+.position-control-container {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 1rem;
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+#positionPlot {
+    max-width: 100%;
+    height: auto;
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    background: white;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+#positionPlot:hover {
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+}
+
+.height-control {
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.position-display .border {
+    background-color: #f8f9fa;
+    transition: all 0.3s ease;
+}
+
+.position-display .border:hover {
+    background-color: #e9ecef;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+#currentX,
+#currentY,
+#currentZ {
+    font-weight: 700;
+    color: #667eea;
+    font-size: 1.1rem;
+}
+
+#heightValue {
+    font-weight: 600;
+    color: #495057;
+}
+
+/* Enhanced canvas interaction */
+#positionPlot:active {
+    cursor: grabbing;
+}
+
+/* Improved workspace visualization */
+.workspace-point {
+    fill: rgba(0, 100, 255, 0.1);
+    stroke: rgba(0, 100, 255, 0.3);
+    stroke-width: 1;
+}
+
+/* Enhanced position indicator */
+.position-indicator {
+    fill: red;
+    stroke: darkred;
+    stroke-width: 2;
+}
+
+.position-crosshair {
+    stroke: red;
+    stroke-width: 1;
+}

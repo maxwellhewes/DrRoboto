@@ -1,495 +1,399 @@
-// DrRoboto Web Control Interface JavaScript
+// Global variables for robot control
+let socket;
+let stepSize = 5; // degrees per key press
+let currentJoints = [0.0, 0.0, 0.0]; // [joint0, joint1, joint2] in degrees
+let currentPosition = { x: 0, y: 0, z: 1.8 }; // Current end-effector position
+let pressedKeys = new Set(); // Track currently pressed keys
+let keyRepeatInterval = null; // For continuous movement
 
-let commandsSent = 0;
-let successfulCommands = 0;
-let socket = null;
-let websocketConnected = false;
+// Joint limits (in degrees)
+const JOINT_LIMITS = {
+    0: { min: -90, max: 90 },   // Joint 0: -90° to +90°
+    1: { min: -34, max: 86 },   // Joint 1: -34° to +86°
+    2: { min: -115, max: 115 }  // Joint 2: -115° to +115°
+};
 
-/**
- * Initialize the interface when the DOM is fully loaded.
- * Sets up sliders, updates statistics, checks connection, and initializes WebSocket.
- */
+// Initialize the control interface
 document.addEventListener('DOMContentLoaded', function () {
-    initializeSliders();
-    updateStats();
-    checkConnection();
-    initializeWebSocket();
+    initializeControls();
+    initializeSocket();
+    initializeKeyboardControls();
 });
 
-/**
- * Initialize joint sliders with event listeners for real-time control.
- * Sets up input event handlers for both joint sliders and implements debounced
- * position sending to prevent excessive API calls during slider dragging.
- */
-function initializeSliders() {
-    const joint1Slider = document.getElementById('joint1');
-    const joint2Slider = document.getElementById('joint2');
-    const joint1Value = document.getElementById('joint1-value');
-    const joint2Value = document.getElementById('joint2-value');
+function initializeControls() {
+    // Initialize step size slider
+    initializeStepSizeControl();
 
-    // Debounce timer for slider updates
-    let sliderDebounceTimer = null;
+    // Initialize individual joint sliders (keep existing functionality)
+    initializeSliders();
 
-    joint1Slider.addEventListener('input', function () {
-        joint1Value.textContent = this.value + '°';
-        sendSliderPosition();
-    });
-
-    joint2Slider.addEventListener('input', function () {
-        joint2Value.textContent = this.value + '°';
-        sendSliderPosition();
-    });
-
-    // Debounced function to send slider position
-    function sendSliderPosition() {
-        clearTimeout(sliderDebounceTimer);
-        sliderDebounceTimer = setTimeout(() => {
-            setCustomJoints(false); // Don't show loading modal for slider updates
-        }, 150); // 150ms debounce delay
-    }
+    // Update displays
+    updateJointDisplays();
+    updatePositionDisplay();
 }
 
-/**
- * Move the robot to a predefined pose.
- * @param {string} poseName - The name of the pose to move to (e.g., 'home', 'wave')
- * @returns {Promise<void>} Promise that resolves when the pose command is complete
- */
-async function moveToPose(poseName) {
-    console.log('Starting moveToPose:', poseName);
-    showLoading();
+function initializeStepSizeControl() {
+    const stepSizeValue = document.getElementById('stepSizeValue');
+    const stepSizeUp = document.getElementById('stepSizeUp');
+    const stepSizeDown = document.getElementById('stepSizeDown');
 
-    try {
-        console.log('Sending request to:', `/api/move/${poseName}`);
-        const response = await fetch(`/api/move/${poseName}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
+    if (stepSizeValue && stepSizeUp && stepSizeDown) {
+        // Update display
+        stepSizeValue.value = stepSize;
+
+        // Up button
+        stepSizeUp.addEventListener('click', function () {
+            if (stepSize < 10) {
+                stepSize++;
+                stepSizeValue.value = stepSize;
             }
         });
 
-        console.log('Response received:', response.status);
-        const data = await response.json();
-        console.log('Response data:', data);
-
-        if (data.success) {
-            showStatus('success', `Moved to pose: ${poseName}`, data.message);
-            updateLastCommand(`Pose: ${poseName}`);
-        } else {
-            showStatus('danger', 'Error', data.error);
-        }
-    } catch (error) {
-        console.error('Error in moveToPose:', error);
-        showStatus('danger', 'Error', 'Failed to send command: ' + error.message);
-    } finally {
-        console.log('Finally block - hiding loading');
-        hideLoading();
-        updateStats();
-    }
-}
-
-/**
- * Set custom joint positions for the robot.
- * @param {boolean} [showLoadingModal=true] - Whether to show loading modal and status messages
- * @returns {Promise<void>} Promise that resolves when the joint command is complete
- */
-async function setCustomJoints(showLoadingModal = true) {
-    const joint1 = document.getElementById('joint1').value;
-    const joint2 = document.getElementById('joint2').value;
-
-    if (showLoadingModal) {
-        showLoading();
-    }
-
-    try {
-        const response = await fetch('/api/joints', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                joint1: parseFloat(joint1) * Math.PI / 180, // Convert to radians
-                joint2: parseFloat(joint2) * Math.PI / 180
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            if (showLoadingModal) {
-                showStatus('success', 'Joints Set', data.message);
-            }
-            updateLastCommand(`Custom: J1=${joint1}°, J2=${joint2}°`);
-        } else {
-            if (showLoadingModal) {
-                showStatus('danger', 'Error', data.error);
-            }
-        }
-    } catch (error) {
-        if (showLoadingModal) {
-            showStatus('danger', 'Error', 'Failed to send command: ' + error.message);
-        }
-    } finally {
-        if (showLoadingModal) {
-            hideLoading();
-        }
-        updateStats();
-    }
-}
-
-/**
- * Reset joints to home position (0 degrees) and move robot to home pose.
- * Updates both slider values and display text, then triggers home pose movement.
- */
-function resetJoints() {
-    document.getElementById('joint1').value = 0;
-    document.getElementById('joint2').value = 0;
-    document.getElementById('joint1-value').textContent = '0°';
-    document.getElementById('joint2-value').textContent = '0°';
-    moveToPose('home');
-}
-
-/**
- * Perform a wave gesture with the robot.
- * @returns {Promise<void>} Promise that resolves when the wave gesture is complete
- */
-async function waveGesture() {
-    showLoading();
-
-    try {
-        const response = await fetch('/api/wave', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
+        // Down button
+        stepSizeDown.addEventListener('click', function () {
+            if (stepSize > 1) {
+                stepSize--;
+                stepSizeValue.value = stepSize;
             }
         });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showStatus('success', 'Wave Gesture', data.message);
-            updateLastCommand('Wave Gesture');
-        } else {
-            showStatus('danger', 'Error', 'Wave gesture failed');
-        }
-    } catch (error) {
-        showStatus('danger', 'Error', 'Failed to send command: ' + error.message);
-    } finally {
-        hideLoading();
-        updateStats();
     }
 }
 
-/**
- * Emergency stop function that immediately moves robot to home position.
- * Shows a warning status message and triggers home pose movement.
- */
-function emergencyStop() {
-    showStatus('warning', 'Emergency Stop', 'Moving to home position...');
-    moveToPose('home');
-}
+function initializeKeyboardControls() {
+    // Add event listeners for keydown and keyup
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
 
-/**
- * Get the current status of the robot.
- * @returns {Promise<void>} Promise that resolves when status is retrieved
- */
-async function getStatus() {
-    try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
-
-        if (data.success) {
-            showStatus('info', 'Robot Status', data.status);
-        } else {
-            showStatus('danger', 'Status Error', data.error);
-        }
-    } catch (error) {
-        showStatus('danger', 'Error', 'Failed to get status: ' + error.message);
-    }
-}
-
-/**
- * Get list of available ROS topics from the robot.
- * @returns {Promise<void>} Promise that resolves when topics are retrieved
- */
-async function getTopics() {
-    try {
-        const response = await fetch('/api/topics');
-        const data = await response.json();
-
-        if (data.success) {
-            const topicsList = data.topics.join('<br>');
-            showStatus('info', 'Available Topics', topicsList);
-        } else {
-            showStatus('danger', 'Topics Error', data.error);
-        }
-    } catch (error) {
-        showStatus('danger', 'Error', 'Failed to get topics: ' + error.message);
-    }
-}
-
-/**
- * Check the health status of the connection to the robot.
- * Updates the connection status indicator based on API health check.
- * @returns {Promise<void>} Promise that resolves when health check is complete
- */
-async function checkConnection() {
-    try {
-        const response = await fetch('/api/health');
-        const data = await response.json();
-
-        if (data.status === 'healthy') {
-            updateConnectionStatus(true);
-        } else {
-            updateConnectionStatus(false);
-        }
-    } catch (error) {
-        updateConnectionStatus(false);
-    }
-}
-
-/**
- * Update the visual connection status indicator.
- * @param {boolean} connected - Whether the connection is active
- */
-function updateConnectionStatus(connected) {
-    const indicator = document.getElementById('connection-indicator');
-    if (connected) {
-        indicator.className = 'badge bg-success me-2';
-        indicator.innerHTML = '<i class="fas fa-circle"></i> Connected';
-    } else {
-        indicator.className = 'badge bg-danger me-2';
-        indicator.innerHTML = '<i class="fas fa-circle"></i> Disconnected';
-    }
-}
-
-/**
- * Display a status message in the status panel.
- * @param {string} type - Alert type ('success', 'danger', 'warning', 'info')
- * @param {string} title - Title of the status message
- * @param {string} message - Content of the status message
- */
-function showStatus(type, title, message) {
-    const statusPanel = document.getElementById('status-panel');
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} status-update`;
-    alertDiv.innerHTML = `
-        <strong>${title}:</strong> ${message}
-        <button type="button" class="btn-close float-end" onclick="this.parentElement.remove()"></button>
-    `;
-
-    statusPanel.insertBefore(alertDiv, statusPanel.firstChild);
-
-    // Keep only last 5 messages
-    while (statusPanel.children.length > 5) {
-        statusPanel.removeChild(statusPanel.lastChild);
-    }
-
-    // Auto-remove after 5 seconds for success messages
-    if (type === 'success') {
-        setTimeout(() => {
-            if (alertDiv.parentElement) {
-                alertDiv.remove();
-            }
-        }, 5000);
-    }
-}
-
-/**
- * Update the display showing the last command sent to the robot.
- * @param {string} command - The command text to display
- */
-function updateLastCommand(command) {
-    document.getElementById('last-command').textContent = command;
-}
-
-/**
- * Update command statistics (commands sent and success rate).
- * Increments the commands sent counter and calculates success rate.
- */
-function updateStats() {
-    commandsSent++;
-    const successRate = commandsSent > 0 ? Math.round((successfulCommands / commandsSent) * 100) : 100;
-
-    document.getElementById('commands-sent').textContent = commandsSent;
-    document.getElementById('success-rate').textContent = successRate + '%';
-}
-
-/**
- * Show the loading modal with backdrop.
- * Prevents body scrolling and displays a loading overlay.
- */
-function showLoading() {
-    console.log('Showing loading modal...');
-    const modalElement = document.getElementById('loadingModal');
-    modalElement.style.display = 'block';
-    modalElement.classList.add('show');
-
-    // Add backdrop
-    const backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
-    backdrop.id = 'loadingBackdrop';
-    document.body.appendChild(backdrop);
-
-    // Prevent body scroll
-    document.body.style.overflow = 'hidden';
-}
-
-/**
- * Hide the loading modal and restore normal page behavior.
- * Removes backdrop and restores body scrolling.
- */
-function hideLoading() {
-    console.log('Hiding loading modal...');
-    const modalElement = document.getElementById('loadingModal');
-    modalElement.style.display = 'none';
-    modalElement.classList.remove('show');
-
-    // Remove backdrop
-    const backdrop = document.getElementById('loadingBackdrop');
-    if (backdrop) {
-        backdrop.remove();
-    }
-
-    // Restore body scroll
-    document.body.style.overflow = '';
-}
-
-// Periodic connection check
-setInterval(checkConnection, 30000); // Check every 30 seconds
-
-/**
- * Initialize WebSocket connection for real-time communication.
- * Sets up Socket.IO connection and event handlers for joint state updates
- * and connection status monitoring.
- */
-function initializeWebSocket() {
-    console.log('Initializing WebSocket connection...');
-
-    // Connect to the Socket.IO server
-    socket = io();
-
-    // Connection event handlers
-    socket.on('connect', function () {
-        console.log('WebSocket connected');
-        websocketConnected = true;
-        updateWebSocketStatus(true);
-        showStatus('success', 'WebSocket', 'Real-time connection established');
-    });
-
-    socket.on('disconnect', function () {
-        console.log('WebSocket disconnected');
-        websocketConnected = false;
-        updateWebSocketStatus(false);
-        showStatus('warning', 'WebSocket', 'Real-time connection lost');
-    });
-
-    socket.on('connect_error', function (error) {
-        console.error('WebSocket connection error:', error);
-        websocketConnected = false;
-        updateWebSocketStatus(false);
-        showStatus('danger', 'WebSocket', 'Connection failed: ' + error.message);
-    });
-
-    // Joint state update handler
-    socket.on('joint_state_update', function (data) {
-        console.log('Received joint state update:', data);
-        updateRealTimePosition(data);
-    });
-
-    // Connection status handler
-    socket.on('connection_status', function (data) {
-        console.log('Connection status:', data);
-        if (data.status === 'connected') {
-            showStatus('info', 'WebSocket', data.message);
+    // Prevent default behavior for arrow keys and WASD to avoid page scrolling
+    document.addEventListener('keydown', function (event) {
+        const key = event.key.toLowerCase();
+        if (['w', 's', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+            event.preventDefault();
         }
     });
 }
 
-/**
- * Update the WebSocket connection status indicator.
- * @param {boolean} connected - Whether the WebSocket is connected
- */
-function updateWebSocketStatus(connected) {
-    const indicator = document.getElementById('websocket-indicator');
-    if (connected) {
-        indicator.className = 'badge bg-success me-2';
-        indicator.innerHTML = '<i class="fas fa-plug"></i> WebSocket Connected';
-    } else {
-        indicator.className = 'badge bg-danger me-2';
-        indicator.innerHTML = '<i class="fas fa-plug"></i> WebSocket Disconnected';
-    }
-}
+function handleKeyDown(event) {
+    const key = event.key.toLowerCase();
 
-/**
- * Update real-time position displays from WebSocket data.
- * Updates joint position displays and timestamp, then syncs sliders.
- * @param {Object} data - Joint state data from WebSocket
- * @param {Object} data.joint1 - Joint 1 position data
- * @param {Object} data.joint2 - Joint 2 position data
- * @param {number} data.timestamp - Timestamp of the position update
- */
-function updateRealTimePosition(data) {
-    if (data.error) {
-        console.error('Joint state error:', data.error);
+    // Only process if key isn't already pressed (prevent multiple triggers)
+    if (pressedKeys.has(key)) {
         return;
     }
 
-    // Update joint position displays
-    const joint1Element = document.getElementById('realtime-joint1');
-    const joint2Element = document.getElementById('realtime-joint2');
-    const timestampElement = document.getElementById('position-timestamp');
+    pressedKeys.add(key);
 
-    if (joint1Element && data.joint1) {
-        joint1Element.textContent = data.joint1.position_degrees.toFixed(1) + '°';
+    // Map keys to joint movements
+    let joint = -1;
+    let direction = 0;
+
+    switch (key) {
+        case 'w':
+            joint = 1;
+            direction = 1; // + degrees
+            break;
+        case 's':
+            joint = 1;
+            direction = -1; // - degrees
+            break;
+        case 'arrowup':
+            joint = 2;
+            direction = 1; // + degrees
+            break;
+        case 'arrowdown':
+            joint = 2;
+            direction = -1; // - degrees
+            break;
+        case 'arrowleft':
+            joint = 0;
+            direction = 1; // + degrees
+            break;
+        case 'arrowright':
+            joint = 0;
+            direction = -1; // - degrees
+            break;
     }
 
-    if (joint2Element && data.joint2) {
-        joint2Element.textContent = data.joint2.position_degrees.toFixed(1) + '°';
-    }
+    if (joint !== -1) {
+        moveJoint(joint, direction);
 
-    if (timestampElement && data.timestamp) {
-        const date = new Date(data.timestamp * 1000);
-        timestampElement.textContent = 'Last update: ' + date.toLocaleTimeString();
-    }
-
-    // Update sliders to match real-time position
-    updateSlidersFromRealTime(data);
-}
-
-/**
- * Update slider positions and values from real-time joint data.
- * Synchronizes slider UI with actual robot joint positions.
- * @param {Object} data - Joint state data from WebSocket
- * @param {Object} data.joint1 - Joint 1 position data with position_degrees property
- * @param {Object} data.joint2 - Joint 2 position data with position_degrees property
- */
-function updateSlidersFromRealTime(data) {
-    if (!data.joint1 || !data.joint2) return;
-
-    const joint1Slider = document.getElementById('joint1');
-    const joint2Slider = document.getElementById('joint2');
-    const joint1Value = document.getElementById('joint1-value');
-    const joint2Value = document.getElementById('joint2-value');
-
-    if (joint1Slider && joint1Value) {
-        joint1Slider.value = data.joint1.position_degrees;
-        joint1Value.textContent = data.joint1.position_degrees.toFixed(1) + '°';
-    }
-
-    if (joint2Slider && joint2Value) {
-        joint2Slider.value = data.joint2.position_degrees;
-        joint2Value.textContent = data.joint2.position_degrees.toFixed(1) + '°';
+        // Start continuous movement
+        startKeyRepeat(joint, direction);
     }
 }
 
-/**
- * Request a joint state update from the robot via WebSocket.
- * Only works when WebSocket connection is active.
- */
-function requestJointUpdate() {
-    if (socket && websocketConnected) {
-        socket.emit('request_joint_update');
+function handleKeyUp(event) {
+    const key = event.key.toLowerCase();
+    pressedKeys.delete(key);
+
+    // Stop continuous movement
+    stopKeyRepeat();
+}
+
+function moveJoint(joint, direction) {
+    // Calculate new angle
+    const newAngle = currentJoints[joint] + (direction * stepSize);
+
+    // Check joint limits
+    const limits = JOINT_LIMITS[joint];
+    if (newAngle < limits.min || newAngle > limits.max) {
+        // Update status to show limit reached
+        updateJointStatus(joint, 'limit');
+        return;
+    }
+
+    // Update joint angle
+    currentJoints[joint] = newAngle;
+
+    // Send command to robot
+    const radians = newAngle * Math.PI / 180;
+    sendJointCommand(joint, radians);
+
+    // Update displays
+    updateJointDisplays();
+    updatePositionDisplay();
+
+    // Update status to show OK
+    updateJointStatus(joint, 'ok');
+}
+
+function startKeyRepeat(joint, direction) {
+    // Clear any existing interval
+    stopKeyRepeat();
+
+    // Start repeating movement every 100ms (10 times per second)
+    keyRepeatInterval = setInterval(() => {
+        moveJoint(joint, direction);
+    }, 100);
+}
+
+function stopKeyRepeat() {
+    if (keyRepeatInterval) {
+        clearInterval(keyRepeatInterval);
+        keyRepeatInterval = null;
+    }
+}
+
+function updateJointDisplays() {
+    // Update joint angle displays
+    for (let i = 0; i < 3; i++) {
+        const display = document.getElementById(`joint${i}Display`);
+        if (display) {
+            display.textContent = currentJoints[i].toFixed(1) + '°';
+        }
+    }
+
+    // Update individual joint sliders
+    for (let i = 0; i < 3; i++) {
+        const slider = document.getElementById(`joint${i}`);
+        const valueDisplay = document.getElementById(`joint${i}-value`);
+
+        if (slider && valueDisplay) {
+            slider.value = currentJoints[i];
+            valueDisplay.textContent = currentJoints[i].toFixed(1) + '°';
+        }
+    }
+}
+
+function updateJointStatus(joint, status) {
+    const statusElement = document.getElementById(`joint${joint}Status`);
+    if (statusElement) {
+        switch (status) {
+            case 'ok':
+                statusElement.textContent = 'OK';
+                statusElement.className = 'badge bg-success';
+                break;
+            case 'limit':
+                statusElement.textContent = 'LIMIT';
+                statusElement.className = 'badge bg-warning';
+                break;
+            case 'error':
+                statusElement.textContent = 'ERROR';
+                statusElement.className = 'badge bg-danger';
+                break;
+        }
+    }
+}
+
+function updatePositionDisplay() {
+    // Calculate end-effector position using forward kinematics
+    const position = calculateForwardKinematics();
+
+    const currentX = document.getElementById('currentX');
+    const currentY = document.getElementById('currentY');
+    const currentZ = document.getElementById('currentZ');
+    const reachabilityStatus = document.getElementById('reachabilityStatus');
+
+    if (currentX) currentX.textContent = position.x.toFixed(3);
+    if (currentY) currentY.textContent = position.y.toFixed(3);
+    if (currentZ) currentZ.textContent = position.z.toFixed(3);
+
+    // Update reachability status
+    if (reachabilityStatus) {
+        reachabilityStatus.textContent = 'Reachable';
+        reachabilityStatus.className = 'h4 mb-1 text-success';
+    }
+}
+
+function calculateForwardKinematics() {
+    // Convert degrees to radians
+    const joint0 = currentJoints[0] * Math.PI / 180;
+    const joint1 = currentJoints[1] * Math.PI / 180;
+    const joint2 = currentJoints[2] * Math.PI / 180;
+
+    // Robot dimensions (matching backend)
+    const LINK1_LENGTH = 1.99;
+    const LINK2_LENGTH = 0.4;
+    const BASE_HEIGHT = 1.8;
+
+    // Calculate forward kinematics
+    const x1 = LINK1_LENGTH * Math.cos(joint1);
+    const y1 = LINK1_LENGTH * Math.sin(joint1);
+    const z1 = 0;
+
+    const x2 = x1 + LINK2_LENGTH * Math.cos(joint1 + joint2);
+    const y2 = y1 + LINK2_LENGTH * Math.sin(joint1 + joint2);
+    const z2 = z1;
+
+    // Apply base rotation
+    const x = x2 * Math.cos(joint0) - y2 * Math.sin(joint0);
+    const y = x2 * Math.sin(joint0) + y2 * Math.cos(joint0);
+    const z = z2 + BASE_HEIGHT;
+
+    return { x, y, z };
+}
+
+function sendJointCommand(joint, radians) {
+    if (socket) {
+        console.log(`Sending joint ${joint} command: ${radians.toFixed(3)} rad (${(radians * 180 / Math.PI).toFixed(1)}°)`);
+        socket.emit('set_joint', { joint: joint, value: radians });
     } else {
-        console.warn('WebSocket not connected, cannot request joint update');
+        console.error('Socket not connected!');
     }
 }
+
+// Initialize individual joint sliders (keep existing functionality)
+function initializeSliders() {
+    const sliders = ['joint0', 'joint1', 'joint2'];
+
+    sliders.forEach(sliderId => {
+        const slider = document.getElementById(sliderId);
+        const valueDisplay = document.getElementById(sliderId + '-value');
+
+        if (slider && valueDisplay) {
+            slider.addEventListener('input', function () {
+                const value = parseFloat(this.value);
+                const jointIndex = parseInt(sliderId.replace('joint', ''));
+
+                // Update current joint angle
+                currentJoints[jointIndex] = value;
+
+                // Update displays
+                updateJointDisplays();
+                updatePositionDisplay();
+
+                // Send command to robot
+                const radians = value * Math.PI / 180;
+                sendJointCommand(jointIndex, radians);
+            });
+        }
+    });
+}
+
+// Socket.IO connection
+function initializeSocket() {
+    socket = io();
+
+    socket.on('connect', function () {
+        console.log('Connected to server via Socket.IO');
+    });
+
+    socket.on('disconnect', function () {
+        console.log('Disconnected from server');
+    });
+
+    socket.on('connection_status', function (data) {
+        console.log('Connection status:', data);
+    });
+
+    socket.on('joint_states', function (data) {
+        console.log('Received joint states:', data);
+        // Update sliders when joint states change
+        if (data.joints) {
+            data.joints.forEach((joint, index) => {
+                const degrees = joint * 180 / Math.PI;
+                currentJoints[index] = degrees;
+
+                const slider = document.getElementById(`joint${index}`);
+                const valueDisplay = document.getElementById(`joint${index}-value`);
+
+                if (slider && valueDisplay) {
+                    slider.value = degrees;
+                    valueDisplay.textContent = degrees.toFixed(1) + '°';
+                }
+            });
+
+            // Update displays
+            updateJointDisplays();
+            updatePositionDisplay();
+        }
+    });
+
+    socket.on('joint_updated', function (data) {
+        console.log('Joint updated:', data);
+    });
+
+    socket.on('end_effector_updated', function (data) {
+        console.log('End-effector updated:', data);
+    });
+
+    socket.on('error', function (data) {
+        console.error('Socket.IO error:', data);
+    });
+
+    socket.on('joints_reset', function (data) {
+        console.log('Joints reset:', data);
+    });
+
+    socket.on('moved_to_home', function (data) {
+        console.log('Moved to home:', data);
+    });
+}
+
+// Reset functions
+function resetJoints() {
+    if (socket) {
+        socket.emit('reset_joints');
+    }
+
+    // Reset UI
+    currentJoints = [0.0, 0.0, 0.0];
+    updateJointDisplays();
+    updatePositionDisplay();
+
+    // Reset all joint statuses
+    for (let i = 0; i < 3; i++) {
+        updateJointStatus(i, 'ok');
+    }
+}
+
+function moveToHome() {
+    if (socket) {
+        socket.emit('move_to_home');
+    }
+
+    // Reset UI to home position
+    currentJoints = [0.0, 0.0, 0.0];
+    updateJointDisplays();
+    updatePositionDisplay();
+
+    // Reset all joint statuses
+    for (let i = 0; i < 3; i++) {
+        updateJointStatus(i, 'ok');
+    }
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function () {
+    stopKeyRepeat();
+});
