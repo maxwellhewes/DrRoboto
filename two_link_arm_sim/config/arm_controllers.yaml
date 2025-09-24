@@ -11,6 +11,7 @@ controller_manager:
 arm_controller:
   ros__parameters:
     joints:
+      - joint0
       - joint1
       - joint2
     
