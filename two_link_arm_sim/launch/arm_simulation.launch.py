@@ -7,13 +7,19 @@ from launch.substitutions import LaunchConfiguration, PythonExpression, PathJoin
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
+from launch.substitutions import Command
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     # Get the package directory
     pkg_share = FindPackageShare('two_link_arm_sim')
+    robot_description_content = ParameterValue(
+        Command(['xacro ', PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf.xacro'])]),
+        value_type=str
+    )
     
     # Paths to important files
-    urdf_file = PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf'])
+    #urdf_file = PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf.xacro'])
     world_file = PathJoinSubstitution([pkg_share, 'worlds', 'arm_world.world'])
     controller_config = PathJoinSubstitution([pkg_share, 'config', 'arm_controllers.yaml'])
     
@@ -28,11 +34,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'robot_description': open(os.path.join(
-                get_package_share_directory('two_link_arm_sim'),
-                'urdf',
-                'two_link_arm.urdf'
-            )).read()
+            'robot_description': robot_description_content
         }]
     )
     

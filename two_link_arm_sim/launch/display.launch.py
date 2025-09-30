@@ -5,20 +5,28 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
+from launch.substitutions import Command
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
+    
     # Get the package directory
     pkg_share = FindPackageShare('two_link_arm_sim')
+
+    robot_description_content = ParameterValue(
+        Command(['xacro ', PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf.xacro'])]),
+        value_type=str
+    )
     
     # Path to URDF file
-    urdf_file = PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf'])
+    #urdf_file = PathJoinSubstitution([pkg_share, 'urdf', 'two_link_arm.urdf.xacro'])
     
     # Launch arguments
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     
     # Read the URDF file
-    with open(os.path.join(get_package_share_directory('two_link_arm_sim'), 'urdf', 'two_link_arm.urdf'), 'r') as urdf:
-        robot_description = urdf.read()
+    # with open(os.path.join(get_package_share_directory('two_link_arm_sim'), 'urdf', 'two_link_arm.urdf.xacro'), 'r') as urdf:
+    #     robot_description = urdf.read()
     
     # Robot state publisher
     robot_state_publisher = Node(
@@ -28,7 +36,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'robot_description': robot_description
+            'robot_description': robot_description_content
         }]
     )
     
